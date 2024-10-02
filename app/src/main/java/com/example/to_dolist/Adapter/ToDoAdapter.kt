@@ -19,12 +19,12 @@ class ToDoAdapter(
         fun onItemClick(item: ToDoModel)
         fun onDeleteItem(item: ToDoModel)
         fun onEditItem(item: ToDoModel)
-
     }
 
     inner class ToDoViewHolder(val view: View) : RecyclerView.ViewHolder(view) {
         fun bind(item: ToDoModel, listener: OnItemClickListener) {
-            view.findViewById<TextView>(R.id.task_text).text = item.task
+
+            view.findViewById<TextView>(R.id.task_text).text = item.description
             view.findViewById<CheckBox>(R.id.task_checkbox).isChecked = item.status
 
             view.setOnClickListener {
