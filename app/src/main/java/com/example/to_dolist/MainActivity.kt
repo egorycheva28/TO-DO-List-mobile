@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.Toast
@@ -16,21 +17,31 @@ import com.example.to_dolist.Adapter.ToDoAdapter
 import com.example.to_dolist.Model.ToDoModel
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.gson.Gson
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStreamWriter
+import retrofit2.HttpException
+import java.io.IOException
+import kotlinx.coroutines.withContext
+import retrofit2.Call
+import retrofit2.Callback
+import retrofit2.Response
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
 
 class MainActivity : AppCompatActivity(), ToDoAdapter.OnItemClickListener {
-
+    private lateinit var apiService: ApiService
     private lateinit var tasksRecyclerView: RecyclerView
     private lateinit var tasksAdapter: ToDoAdapter
     private lateinit var addButton: FloatingActionButton
-    private lateinit var openButton: Button
-    private lateinit var saveButton: Button
+    private lateinit var updateButton: Button
 
     private var taskList: MutableList<ToDoModel> = mutableListOf()
-    private var nextTaskId = 0
-    private val PICK_FILE_REQUEST_CODE = 1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,6 +53,15 @@ class MainActivity : AppCompatActivity(), ToDoAdapter.OnItemClickListener {
         tasksAdapter = ToDoAdapter(taskList, this)
         tasksRecyclerView.adapter = tasksAdapter
 
+        val retrofit = Retrofit.Builder()
+            .baseUrl("http://10.0.2.2:5186/")
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+
+        apiService = retrofit.create(ApiService::class.java)
+
+        getTasks()
+
         addButton = findViewById(R.id.add)
         addButton.setOnClickListener {
             val builder = AlertDialog.Builder(this)
@@ -51,97 +71,139 @@ class MainActivity : AppCompatActivity(), ToDoAdapter.OnItemClickListener {
                 .setPositiveButton("Добавить") { _, _ ->
                     val task = input.text.toString()
                     if (task.isNotEmpty()) {
-                        val newTask = ToDoModel(nextTaskId++, task, false)
-                        taskList.add(newTask)
-                        tasksAdapter.notifyItemInserted(taskList.size - 1)
+                        addTask(task)
                     }
                 }
                 .setNegativeButton("Отмена", null)
             builder.show()
         }
 
-        saveButton = findViewById(R.id.save)
-        saveButton.setOnClickListener {
-            val name = "TO-DO List"
-            val extension = ".json"
-            var number = 1
-            var fileName = "$name($number)$extension"
-            val directory = Environment.getExternalStoragePublicDirectory(
-                Environment.DIRECTORY_DOWNLOADS
-            )
-            var file = File(directory, fileName)
-
-            while (file.exists()) {
-                number++
-                fileName = "$name($number)$extension"
-                file = File(directory, fileName)
-            }
-
-            FileOutputStream(file).use { fos ->
-                OutputStreamWriter(fos).use { writer ->
-                    writer.write(Gson().toJson(taskList))
-                }
-            }
+        updateButton = findViewById(R.id.update)
+        updateButton.setOnClickListener {
+            getTasks()
         }
-
-        openButton = findViewById(R.id.open)
-        openButton.setOnClickListener {
-            val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
-                type = "application/json"
-                addCategory(Intent.CATEGORY_OPENABLE)
-            }
-            startActivityForResult(Intent.createChooser(
-                intent,
-                "Выберите файл"
-            ), PICK_FILE_REQUEST_CODE)
-        }
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == PICK_FILE_REQUEST_CODE && resultCode == Activity.RESULT_OK) {
-            data?.data?.let { uri ->
-                updateTasks(uri)
-            }
-        }
-    }
-
-    private fun updateTasks(uri: Uri) {
-        val json = contentResolver.openInputStream(uri)?.bufferedReader().use { it?.readText() }
-        val taskListType = object : com.google.gson.reflect.TypeToken<List<ToDoModel>>() {}.type
-        val newTasks: List<ToDoModel> = Gson().fromJson(json, taskListType)
-
-        taskList.clear()
-        taskList.addAll(newTasks)
-        tasksAdapter.notifyDataSetChanged()
     }
 
     override fun onItemClick(item: ToDoModel) {
-        item.status = !item.status
-        tasksAdapter.notifyDataSetChanged()
+        if (item.status) {
+            incompleteTask(item.id)
+        } else {
+            completeTask(item.id)
+        }
     }
 
     override fun onDeleteItem(item: ToDoModel) {
-        val position = taskList.indexOf(item)
-        taskList.removeAt(position)
-        tasksAdapter.notifyItemRemoved(position)
+        deleteTask(item.id)
     }
 
     override fun onEditItem(item: ToDoModel) {
         val builder = AlertDialog.Builder(this)
         val input = EditText(this)
-        input.setText(item.task)
+        input.setText(item.description)
         builder.setView(input)
             .setTitle("Редактировать дело")
             .setPositiveButton("Сохранить") { _, _ ->
                 val updatedTask = input.text.toString()
                 if (updatedTask.isNotEmpty()) {
-                    item.task = updatedTask
-                    tasksAdapter.notifyDataSetChanged()
+                    editTask(item.id, updatedTask)
                 }
             }
             .setNegativeButton("Отмена", null)
         builder.show()
+    }
+
+    private fun getTasks() {
+        apiService.get().enqueue(object : retrofit2.Callback<List<ToDoModel>> {
+            override fun onResponse(
+                call: Call<List<ToDoModel>>,
+                response: retrofit2.Response<List<ToDoModel>>
+            ) {
+                if (response.isSuccessful) {
+                    taskList.clear()
+                    response.body()?.let {
+                        it.forEach { task ->
+                            println("Task description: ${task.status}")
+                        }
+                        taskList.addAll(it)
+                    }
+                    tasksAdapter.notifyDataSetChanged()
+                }
+            }
+
+            override fun onFailure(call: Call<List<ToDoModel>>, t: Throwable) {
+                t.printStackTrace()
+            }
+        })
+    }
+
+    private fun addTask(task: String) {
+        apiService.add(task).enqueue(object : Callback<Void> {
+            override fun onResponse(call: Call<Void>, response: Response<Void>) {
+                if (response.isSuccessful) {
+                    getTasks()
+                }
+            }
+
+            override fun onFailure(call: Call<Void>, t: Throwable) {
+                t.printStackTrace()
+            }
+        })
+    }
+
+    private fun deleteTask(id: Int) {
+        apiService.delete(id).enqueue(object : Callback<Void> {
+            override fun onResponse(call: Call<Void>, response: Response<Void>) {
+                if (response.isSuccessful) {
+                    getTasks()
+                }
+            }
+
+            override fun onFailure(call: Call<Void>, t: Throwable) {
+                t.printStackTrace()
+            }
+        })
+    }
+
+    private fun editTask(id: Int, task: String) {
+        apiService.edit(id, task).enqueue(object : Callback<Void> {
+            override fun onResponse(call: Call<Void>, response: Response<Void>) {
+                if (response.isSuccessful) {
+                    getTasks()
+                }
+            }
+
+            override fun onFailure(call: Call<Void>, t: Throwable) {
+                t.printStackTrace()
+            }
+        })
+    }
+
+    private fun completeTask(id: Int) {
+        apiService.complete(id).enqueue(object : Callback<Void> {
+            override fun onResponse(call: Call<Void>, response: Response<Void>) {
+                if (response.isSuccessful) {
+                    getTasks()
+                }
+            }
+
+            override fun onFailure(call: Call<Void>, t: Throwable) {
+                t.printStackTrace()
+            }
+        })
+    }
+
+    private fun incompleteTask(id: Int) {
+        apiService.incomplete(id).enqueue(object : Callback<Void> {
+            override fun onResponse(call: Call<Void>, response: Response<Void>) {
+                if (response.isSuccessful) {
+                    getTasks()
+                }
+            }
+
+            override fun onFailure(call: Call<Void>, t: Throwable) {
+                t.printStackTrace()
+            }
+        })
     }
 }
 
