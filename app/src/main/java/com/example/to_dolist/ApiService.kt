@@ -14,19 +14,19 @@ import retrofit2.http.Path
 interface ApiService {
 
     @GET("api/todo")
-    fun getTasks():
+    fun get():
             Call<List<ToDoModel>>
 
     @POST("api/todo")
-    fun addTask(@Body data: String):
+    fun add(@Body data: String):
             Call<Void>
 
     @DELETE("api/todo/{id}")
-    fun deleteTask(@Path("id") id: Int):
+    fun delete(@Path("id") id: Int):
             Call<Void>
 
     @PUT("api/todo/{id}")
-    fun editTask(@Path("id") id: Int, @Body data: String):
+    fun edit(@Path("id") id: Int, @Body data: String):
             Call<Void>
 
     @PATCH("api/todo/{id}/complete")
